@@ -25,12 +25,12 @@ void my_free(void *);
 // Step 3 -- Done
 // Step 4 -- Done
 // Step 5 -- Done	
-// Step 6
-// Step 7
+// Step 6 -- Done
+// Step 7 -- Done
 
 // Test 1
 // Test 2
-// Test 3
+// Test 3 
 // Test 4
 
 // Program 1
@@ -57,10 +57,12 @@ int main()
 // uses malloc to initialize a bufer of given size to use in your custome allocator
 void my_initialize_heap(int size)
 {
-	free_head = malloc(size);
-	free_head->block_size = size - overhead;
+	// since we want the data portion to have "size" many bytes, we need to allocate
+	// size + overehad space for our block
+	free_head = malloc(size + overhead);
+	free_head->block_size = size;
 	free_head->next_block = NULL;
-	free_head->data = free_head + overhead;
+	free_head->data = (struct Block*)((unsigned char*)free_head + overhead);
 }
 
 // Fills an allocation request of size bytes and
@@ -75,59 +77,94 @@ void* my_alloc(int size)
 	while (keep_going)
 	{
 		// check that the current block has enough size
-		if (temp_block->block_size > size)
+		if (temp_block->block_size > size && size%void_size == 0)
 		{
-			// check that the data size is a multiple of void*
-			if (size%void_size == 0)
+			// at this point the data will be allocated so do not continue
+			keep_going = 0;
+
+			// case 1: head and split
+			if (temp_block == free_head && temp_block->block_size - size > overhead + void_size)
 			{
-				// at this point the data will be allocated so do not continue
-				keep_going = 0;
+				// block that will be carved out
+				struct Block* split_block;
+				// amount of shift to the new carved block
+				int shift_length = size + overhead;
+				// position new block
+				split_block = ((unsigned char*)temp_block + shift_length);
+				// set split block variables
+				split_block->block_size = temp_block->block_size - size - overhead;
+				split_block->data = (struct Block*)((unsigned char*)split_block + overhead);
+				split_block->next_block = temp_block->next_block;
+				// null the original next pointer
+				temp_block->next_block = NULL;
+				// update the size of the original block
+				temp_block->block_size = size;
+				// datat pointer remains the same
+				// move the free head reference
+				free_head = split_block;
 
-				// need a second temp pointer to switch stuff
-				struct Block* chosen_block = temp_block;
+				// return reference to data
+				return temp_block->data;
+			}
+			// case 2: head and no split
+			else if (temp_block == free_head)
+			{
+				// move free head reference
+				free_head = temp_block->next_block;
+				// since no block is being carved do not update the size of the block allocated
+				// null the next reference of the allocated block
+				temp_block->next_block = NULL;
 
-				// case 1: head and split
-				if (temp_block == free_head && temp_block->block_size - size > overhead + void_size)
-				{
-					int shift_length = size + overhead;
-					// switch temp block next's reference
+				//return reference to data
+				return temp_block->data;
+			}
+			// ccase 3: not head and split
+			else if (temp_block != free_head  && temp_block->block_size - size > overhead + void_size)
+			{
+				// block that will be carved out
+				struct Block* split_block;
+				// amount of shift to the new carved block
+				int shift_length = size + overhead;
+				// position new block
+				split_block = ((unsigned char*)temp_block + shift_length);
+				// set split block variables
+				split_block->block_size = temp_block->block_size - size - overhead;
+				split_block->data = (struct Block*)((unsigned char*)split_block + overhead);
+				split_block->next_block = temp_block->next_block;
+				// update the size of the original block
+				temp_block->block_size = size;
+				// datat pointer remains the same
 
-					// null the original next pointer
-
-					// move the free head reference
-
+				// subroutine to find the Block that is pointing to our temp_block
+				// start at the free head and move to the next until the next pointer is reference to our temp_block
+				struct Block* previous_block = free_head;
+				while (previous_block->next_block != temp_block) {
+					previous_block = previous_block->next_block;
 				}
-				// case 2: head and no split
-				else if (temp_block == free_head)
-				{
-					// 
-				}
-				// ccase 3: not head and split
-				else if (temp_block != free_head  && temp_block->block_size - size > overhead + void_size)
-				{
+				// update previous block reference to the next that temp_block has
+				previous_block->next_block = temp_block->next_block;
+				// null temp_block's next pointer
+				temp_block->next_block = NULL;
 
+				// return temp_block's data
+				return temp_block->data;
+			}
+			// case 4: not head and no split
+			else
+			{
+				// subroutine to find the Block that is pointing to our temp_block
+				// start at the free head and move to the next until the next pointer is reference to our temp_block
+				struct Block* previous_block = free_head;
+				while (previous_block->next_block != temp_block) {
+					previous_block = previous_block->next_block;
 				}
-				// case 4: not head and no split
-				else
-				{
+				// update previous block reference to the next that temp_block has
+				previous_block->next_block = temp_block->next_block;
+				// null temp_block's next pointer
+				temp_block->next_block = NULL;
 
-				}
-				// decide whether to split or not
-				if (temp_block->block_size - size > overhead + void_size)
-				{
-					//
-					// split
-					//
-
-					// move the free head
-					free_head = free_head + size + overhead;
-					// return pointer to the data section of new space
-					return temp_block->data;
-				}
-				else
-				{
-					// TO_DO: no split
-				}
+				// return temp_block's data
+				return temp_block->data;
 			}
 		}
 		// update temp to next
@@ -140,15 +177,12 @@ void* my_alloc(int size)
 
 void my_free(void *data)
 {
-	// store current location of the freehead for later
-	struct  Block* temp_pointer = free_head;
-
-	// cast data to an address location in order to
-	// do pointer arithmetic
-	free_head = (struct Block*)((unsigned char*)data) - overhead;
-
-	// move the free heads next pointer
-	free_head->next_block = temp_pointer;
+	// new free block
+	struct  Block* free_block = (struct Block*)((unsigned char*)data - overhead);
+	// link the new block to the list of free blocks by swaping references with the free head
+	free_block->next_block = free_head;
+	// move free heads reference
+	free_head = free_block;
 }
 
 void main_test()
